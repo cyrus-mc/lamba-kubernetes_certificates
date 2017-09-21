@@ -35,6 +35,7 @@ def createCertRequest(pkey, digest="sha256", **name):
     Returns:   The certificate request in an X509Req object
     """
     req = crypto.X509Req()
+
     subj = req.get_subject()
 
     for (key,value) in name.items():
@@ -59,6 +60,10 @@ def createCertificate(req, (issuerCert, issuerKey), serial, (notBefore, notAfter
     Returns:   The signed certificate in an X509 object
     """
     cert = crypto.X509()
+
+    # we want version 3 certs since we use v3 extensions (2 = Version 3 for some reason)
+    cert.set_version(2)
+
     cert.set_serial_number(serial)
     cert.gmtime_adj_notBefore(notBefore)
     cert.gmtime_adj_notAfter(notAfter)
@@ -149,10 +154,11 @@ def lambda_handler(event, context):
         s3.Object(bucket, 'ca.pem').put(Body=crypto.dump_certificate(crypto.FILETYPE_PEM, ca_cert))
 
         # next up, generate the API server key and certificate
-        (api_key, api_cert) = createCerts(ca_key, ca_cert, "kube-apiserver", [ 'DNS:kubernetes',
+        (api_key, api_cert) = createCerts(ca_key, ca_cert, "kube-apiserver", [ 'IP:10.3.0.1', 'DNS:kubernetes',
             'DNS:kubernetes.default',
             'DNS:kubernetes.default.svc',
             'DNS:kubernetes.default.svc.cluster.local',
+            "DNS:*.{0}.elb.amazonaws.com".format(region),
             "DNS:apiserver.{0}.{1}".format(event['cluster-name'], event['internal-tld']) ])
 
         # write API key and certificate to our S3 bucket
@@ -165,5 +171,12 @@ def lambda_handler(event, context):
         # write worker key and certificate to our S3 bucket
         s3.Object(bucket, 'worker-key.pem').put(Body=crypto.dump_privatekey(crypto.FILETYPE_PEM, wrk_key))
         s3.Object(bucket, 'worker.pem').put(Body=crypto.dump_certificate(crypto.FILETYPE_PEM, wrk_cert))
+
+        # finally, generate admin key and certificate
+        (admin_key, admin_cert) = createCerts(ca_key, ca_cert, "kube-admin", [])
+
+        # write admin key and certificate to our S3 bucket
+        s3.Object(bucket, 'admin-key.pem').put(Body=crypto.dump_privatekey(crypto.FILETYPE_PEM, admin_key))
+        s3.Object(bucket, 'admin.pem').put(Body=crypto.dump_certificate(crypto.FILETYPE_PEM, admin_cert))
 
     return True
